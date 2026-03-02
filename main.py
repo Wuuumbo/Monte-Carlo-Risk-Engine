@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import os
+from mangum import Mangum
 import time
 from pathlib import Path
 from typing import Literal
@@ -517,3 +518,11 @@ def serve_frontend():
     if html_path.exists():
         return FileResponse(str(html_path), media_type="text/html")
     return {"error": "index.html not found — make sure to run uvicorn from the project root."}
+
+
+# ── Vercel ASGI handler ────────────────────────────────────────────────────────
+# Mangum wraps the FastAPI ASGI app into an AWS Lambda / Vercel-compatible
+# handler. WITHOUT this, Vercel cannot call the FastAPI routes at all — every
+# request returns a network error before even hitting Python code.
+# The variable MUST be named `handler` (Vercel convention).
+handler = Mangum(app, lifespan="off")

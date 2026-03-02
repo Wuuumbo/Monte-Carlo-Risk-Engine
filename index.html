@@ -1,0 +1,1119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Monte Carlo Risk Pricer · Quant Lab</title>
+
+  <!-- Plotly CDN -->
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+
+  <!-- Google Fonts: JetBrains Mono + Syne -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Syne:wght@400;600;800&display=swap" rel="stylesheet" />
+
+  <style>
+    /* ── CSS Variables ── */
+    :root {
+      --bg:       #080c10;
+      --surface:  #0d1117;
+      --panel:    #111820;
+      --border:   rgba(0, 220, 180, 0.12);
+      --border-h: rgba(0, 220, 180, 0.40);
+      --accent:   #00dcb4;
+      --accent2:  #00a3ff;
+      --danger:   #ff3e5e;
+      --danger2:  #ff9900;
+      --text:     #d0e8e0;
+      --muted:    rgba(208, 232, 224, 0.45);
+      --mono:     'JetBrains Mono', monospace;
+      --display:  'Syne', sans-serif;
+      --glow:     0 0 24px rgba(0, 220, 180, 0.18);
+      --glow-h:   0 0 40px rgba(0, 220, 180, 0.35);
+    }
+
+    /* ── Reset & Base ── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 13px;
+      line-height: 1.6;
+      min-height: 100vh;
+      background-image:
+        radial-gradient(ellipse 120% 60% at 80% -10%, rgba(0, 163, 255, 0.06) 0%, transparent 60%),
+        radial-gradient(ellipse 80% 40% at 10% 90%,  rgba(0, 220, 180, 0.05) 0%, transparent 55%),
+        url("data:image/svg+xml,%3Csvg width='60' height='60' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M0 0h60v60H0z' fill='none'/%3E%3Ccircle cx='30' cy='30' r='0.6' fill='rgba(0,220,180,0.06)'/%3E%3C/svg%3E");
+    }
+
+    /* ── Layout ── */
+    .app-wrapper {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 40px 24px 80px;
+    }
+
+    /* ── Header ── */
+    header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      margin-bottom: 48px;
+      padding-bottom: 24px;
+      border-bottom: 1px solid var(--border);
+      flex-wrap: wrap;
+      gap: 16px;
+    }
+
+    .logo-group { display: flex; flex-direction: column; gap: 4px; }
+
+    .logo-tag {
+      font-family: var(--mono);
+      font-size: 10px;
+      font-weight: 500;
+      letter-spacing: 0.22em;
+      color: var(--accent);
+      text-transform: uppercase;
+      opacity: 0.8;
+    }
+
+    .logo-title {
+      font-family: var(--display);
+      font-size: 32px;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      line-height: 1.1;
+      background: linear-gradient(135deg, #fff 30%, var(--accent) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .logo-sub {
+      font-size: 11px;
+      color: var(--muted);
+      letter-spacing: 0.05em;
+      margin-top: 4px;
+    }
+
+    .header-badges { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 10px;
+      letter-spacing: 0.12em;
+      padding: 4px 10px;
+      border-radius: 2px;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      text-transform: uppercase;
+    }
+    .badge .dot {
+      width: 5px; height: 5px;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 6px var(--accent);
+      animation: pulse 2s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%,100% { opacity: 1; }
+      50%      { opacity: 0.3; }
+    }
+
+    /* ── Two-column grid ── */
+    .main-grid {
+      display: grid;
+      grid-template-columns: 340px 1fr;
+      gap: 24px;
+      align-items: start;
+    }
+    @media (max-width: 900px) {
+      .main-grid { grid-template-columns: 1fr; }
+    }
+
+    /* ── Panel (card) ── */
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 24px;
+      position: relative;
+      overflow: hidden;
+    }
+    .panel::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(135deg, rgba(0,220,180,0.025) 0%, transparent 60%);
+      pointer-events: none;
+    }
+
+    .panel-title {
+      font-family: var(--display);
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .panel-title::before {
+      content: '';
+      display: inline-block;
+      width: 20px; height: 1px;
+      background: var(--accent);
+      box-shadow: var(--glow);
+    }
+
+    /* ── Form Elements ── */
+    .field { margin-bottom: 16px; }
+    .field:last-child { margin-bottom: 0; }
+
+    label {
+      display: block;
+      font-size: 10px;
+      font-weight: 500;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+
+    input, select {
+      width: 100%;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 2px;
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 13px;
+      padding: 8px 12px;
+      transition: border-color 0.2s, box-shadow 0.2s;
+      appearance: none;
+      -webkit-appearance: none;
+    }
+    input:focus, select:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px rgba(0, 220, 180, 0.12);
+    }
+    input::placeholder { color: rgba(208, 232, 224, 0.25); }
+
+    select { cursor: pointer; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='rgba(0,220,180,0.6)' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; padding-right: 32px; }
+
+    /* ── Asset Rows ── */
+    .asset-rows { display: flex; flex-direction: column; gap: 8px; }
+
+    .asset-row {
+      display: grid;
+      grid-template-columns: 1fr 72px 28px;
+      gap: 6px;
+      align-items: center;
+      animation: slideIn 0.2s ease;
+    }
+    @keyframes slideIn {
+      from { opacity: 0; transform: translateY(-6px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .asset-row input { font-size: 12px; padding: 7px 10px; }
+
+    .weight-input { text-align: right; }
+    .weight-suffix {
+      font-size: 10px;
+      color: var(--muted);
+      text-align: center;
+    }
+
+    .remove-btn {
+      background: none;
+      border: 1px solid rgba(255, 62, 94, 0.25);
+      border-radius: 2px;
+      color: var(--danger);
+      cursor: pointer;
+      font-size: 14px;
+      line-height: 1;
+      padding: 0;
+      height: 28px;
+      width: 28px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.2s, border-color 0.2s;
+    }
+    .remove-btn:hover { background: rgba(255,62,94,0.1); border-color: var(--danger); }
+
+    .add-asset-btn {
+      width: 100%;
+      margin-top: 8px;
+      background: none;
+      border: 1px dashed var(--border);
+      border-radius: 2px;
+      color: var(--muted);
+      cursor: pointer;
+      font-family: var(--mono);
+      font-size: 11px;
+      letter-spacing: 0.1em;
+      padding: 7px;
+      text-transform: uppercase;
+      transition: border-color 0.2s, color 0.2s;
+    }
+    .add-asset-btn:hover { border-color: var(--accent); color: var(--accent); }
+    .add-asset-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+
+    .weight-total {
+      font-size: 11px;
+      text-align: right;
+      margin-top: 6px;
+      color: var(--muted);
+    }
+    .weight-total.ok    { color: var(--accent); }
+    .weight-total.error { color: var(--danger); }
+
+    /* ── Slider ── */
+    .range-wrapper { display: flex; align-items: center; gap: 10px; }
+    input[type="range"] {
+      flex: 1;
+      height: 3px;
+      background: var(--border);
+      border-radius: 2px;
+      cursor: pointer;
+      accent-color: var(--accent);
+      padding: 0;
+    }
+    .range-value {
+      font-size: 13px;
+      color: var(--accent);
+      min-width: 50px;
+      text-align: right;
+    }
+
+    /* ── Two-col fields ── */
+    .fields-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+    /* ── Run Button ── */
+    .run-btn {
+      width: 100%;
+      margin-top: 24px;
+      padding: 14px 24px;
+      background: linear-gradient(135deg, rgba(0,220,180,0.15), rgba(0,163,255,0.1));
+      border: 1px solid var(--accent);
+      border-radius: 2px;
+      color: var(--accent);
+      cursor: pointer;
+      font-family: var(--display);
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      position: relative;
+      overflow: hidden;
+      transition: all 0.3s;
+    }
+    .run-btn::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(135deg, rgba(0,220,180,0.08), rgba(0,163,255,0.06));
+      opacity: 0;
+      transition: opacity 0.3s;
+    }
+    .run-btn:hover:not(:disabled) {
+      box-shadow: var(--glow-h);
+      border-color: var(--accent);
+      transform: translateY(-1px);
+    }
+    .run-btn:hover:not(:disabled)::before { opacity: 1; }
+    .run-btn:active:not(:disabled) { transform: translateY(0); }
+    .run-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    /* ── Results panel ── */
+    .results-col { display: flex; flex-direction: column; gap: 20px; }
+
+    /* ── KPI Grid ── */
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+    }
+    @media (max-width: 1100px) { .kpi-grid { grid-template-columns: repeat(2, 1fr); } }
+
+    .kpi-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      padding: 14px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      transition: border-color 0.2s;
+      animation: fadeUp 0.4s ease both;
+    }
+    .kpi-card:hover { border-color: var(--border-h); }
+
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(12px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .kpi-label {
+      font-size: 9px;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .kpi-value {
+      font-family: var(--display);
+      font-size: 22px;
+      font-weight: 800;
+      line-height: 1;
+      letter-spacing: -0.02em;
+    }
+    .kpi-sub {
+      font-size: 10px;
+      color: var(--muted);
+    }
+
+    .kpi-var95  .kpi-value { color: var(--danger2); }
+    .kpi-var99  .kpi-value { color: var(--danger); }
+    .kpi-es95   .kpi-value { color: var(--danger2); }
+    .kpi-es99   .kpi-value { color: var(--danger); }
+    .kpi-accent .kpi-value { color: var(--accent); }
+    .kpi-blue   .kpi-value { color: var(--accent2); }
+
+    .kpi-card.kpi-wide {
+      grid-column: span 2;
+    }
+
+    /* ── Chart containers ── */
+    .chart-panel { padding: 20px; }
+    .chart-title {
+      font-family: var(--display);
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 4px;
+    }
+    .chart-subtitle { font-size: 10px; color: rgba(208,232,224,0.3); margin-bottom: 16px; }
+    .chart-el { width: 100%; }
+
+    /* ── Status bar ── */
+    .status-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 16px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 2px;
+      font-size: 11px;
+      color: var(--muted);
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .status-bar .status-items { display: flex; gap: 20px; flex-wrap: wrap; }
+    .status-bar .item { display: flex; gap: 6px; }
+    .status-bar .item .k { color: rgba(208,232,224,0.3); }
+    .status-bar .item .v { color: var(--text); }
+
+    /* ── Loader ── */
+    .loader-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(8, 12, 16, 0.85);
+      backdrop-filter: blur(4px);
+      z-index: 999;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 20px;
+    }
+    .loader-overlay.active { display: flex; }
+
+    .loader-ring {
+      width: 60px; height: 60px;
+      border-radius: 50%;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .loader-text {
+      font-family: var(--display);
+      font-size: 13px;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--accent);
+    }
+    .loader-sub { font-size: 11px; color: var(--muted); letter-spacing: 0.1em; }
+
+    /* ── Error toast ── */
+    .toast {
+      display: none;
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      background: rgba(255, 62, 94, 0.12);
+      border: 1px solid rgba(255, 62, 94, 0.4);
+      border-radius: 3px;
+      padding: 12px 18px;
+      color: var(--danger);
+      font-size: 12px;
+      z-index: 1000;
+      max-width: 360px;
+      animation: toastIn 0.3s ease;
+    }
+    .toast.active { display: block; }
+    @keyframes toastIn {
+      from { opacity: 0; transform: translateY(12px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    /* ── Placeholder ── */
+    .placeholder {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 300px;
+      border: 1px dashed var(--border);
+      border-radius: 3px;
+      flex-direction: column;
+      gap: 12px;
+      color: var(--muted);
+    }
+    .placeholder-icon { font-size: 32px; opacity: 0.4; }
+    .placeholder-text { font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; }
+
+    /* ── Hidden ── */
+    .hidden { display: none !important; }
+
+    /* ── Divider ── */
+    .divider {
+      height: 1px;
+      background: var(--border);
+      margin: 4px 0;
+    }
+
+    /* ── Footer ── */
+    footer {
+      margin-top: 60px;
+      padding-top: 20px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 10px;
+      color: rgba(208,232,224,0.2);
+      letter-spacing: 0.1em;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    /* ── Scrollbar ── */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: var(--bg); }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--border-h); }
+  </style>
+</head>
+<body>
+
+<!-- ─── Loader Overlay ──────────────────────────────────────────── -->
+<div class="loader-overlay" id="loader">
+  <div class="loader-ring"></div>
+  <div class="loader-text">Running Monte Carlo Engine</div>
+  <div class="loader-sub" id="loaderSub">Fetching market data · Cholesky decomposition · Vectorized GBM</div>
+</div>
+
+<!-- ─── Error Toast ─────────────────────────────────────────────── -->
+<div class="toast" id="errorToast"></div>
+
+<!-- ─── App ────────────────────────────────────────────────────── -->
+<div class="app-wrapper">
+
+  <!-- Header -->
+  <header>
+    <div class="logo-group">
+      <span class="logo-tag">// Quantitative Risk Engine v1.0</span>
+      <h1 class="logo-title">Monte Carlo<br>Portfolio Pricer</h1>
+      <p class="logo-sub">Cholesky-correlated GBM · VaR · Expected Shortfall · 10,000 paths</p>
+    </div>
+    <div class="header-badges">
+      <div class="badge"><span class="dot"></span>Numpy Vectorized Engine</div>
+      <div class="badge">FastAPI · Vercel</div>
+      <div class="badge">yfinance · SciPy KDE</div>
+    </div>
+  </header>
+
+  <!-- Main Grid -->
+  <div class="main-grid">
+
+    <!-- ── LEFT: Control Panel ── -->
+    <div style="display:flex; flex-direction:column; gap:16px;">
+
+      <!-- Portfolio Setup -->
+      <div class="panel">
+        <div class="panel-title">Portfolio Setup</div>
+
+        <div class="field">
+          <label>Initial Capital</label>
+          <input type="number" id="capital" value="100000" min="1000" step="1000" />
+        </div>
+
+        <!-- Asset Rows -->
+        <div class="field">
+          <label>Assets · Ticker / Weight</label>
+          <div class="asset-rows" id="assetRows"></div>
+          <button class="add-asset-btn" id="addAssetBtn" onclick="addAssetRow()">+ Add Asset</button>
+          <div class="weight-total" id="weightTotal">Σ = 0%</div>
+        </div>
+      </div>
+
+      <!-- Simulation Parameters -->
+      <div class="panel">
+        <div class="panel-title">Simulation Parameters</div>
+
+        <div class="fields-grid">
+          <div class="field">
+            <label>Data Granularity</label>
+            <select id="granularity">
+              <option value="1d" selected>Daily (1d)</option>
+              <option value="1wk">Weekly (1wk)</option>
+              <option value="1mo">Monthly (1mo)</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Num. Simulations</label>
+            <select id="nSims">
+              <option value="1000">1,000</option>
+              <option value="5000">5,000</option>
+              <option value="10000" selected>10,000</option>
+              <option value="25000">25,000</option>
+              <option value="50000">50,000</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="field">
+          <label>Time Horizon — <span id="horizonLabel">252 periods</span></label>
+          <div class="range-wrapper">
+            <input type="range" id="horizon" min="5" max="504" value="252" step="1"
+              oninput="document.getElementById('horizonLabel').textContent = this.value + ' periods'; document.getElementById('horizonVal').textContent = this.value;" />
+            <span class="range-value" id="horizonVal">252</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Run -->
+      <button class="run-btn" id="runBtn" onclick="runSimulation()">
+        ▶ &nbsp; Run Simulation
+      </button>
+
+      <!-- Status Bar -->
+      <div class="status-bar" id="statusBar">
+        <div class="status-items">
+          <div class="item"><span class="k">Status</span><span class="v" id="statusText">Awaiting input</span></div>
+          <div class="item"><span class="k">Engine</span><span class="v">NumPy · Cholesky GBM</span></div>
+        </div>
+        <div class="item"><span class="k">Elapsed</span><span class="v" id="elapsedText">—</span></div>
+      </div>
+
+    </div><!-- /left col -->
+
+    <!-- ── RIGHT: Results ── -->
+    <div class="results-col" id="resultsCol">
+
+      <!-- Placeholder -->
+      <div class="placeholder" id="placeholder">
+        <div class="placeholder-icon">⬡</div>
+        <div class="placeholder-text">Configure portfolio and run simulation</div>
+      </div>
+
+      <!-- KPI Row (hidden until results) -->
+      <div class="hidden" id="kpiSection">
+        <div class="panel" style="padding:20px;">
+          <div class="panel-title">Risk Metrics</div>
+          <div class="kpi-grid">
+            <div class="kpi-card kpi-var95">
+              <div class="kpi-label">VaR 95%</div>
+              <div class="kpi-value" id="kVaR95">—</div>
+              <div class="kpi-sub" id="kVaR95pct">— of portfolio</div>
+            </div>
+            <div class="kpi-card kpi-var99">
+              <div class="kpi-label">VaR 99%</div>
+              <div class="kpi-value" id="kVaR99">—</div>
+              <div class="kpi-sub" id="kVaR99pct">— of portfolio</div>
+            </div>
+            <div class="kpi-card kpi-es95">
+              <div class="kpi-label">ES 95% (CVaR)</div>
+              <div class="kpi-value" id="kES95">—</div>
+              <div class="kpi-sub" id="kES95pct">Expected tail loss</div>
+            </div>
+            <div class="kpi-card kpi-es99">
+              <div class="kpi-label">ES 99% (CVaR)</div>
+              <div class="kpi-value" id="kES99">—</div>
+              <div class="kpi-sub" id="kES99pct">Expected tail loss</div>
+            </div>
+            <div class="kpi-card kpi-accent">
+              <div class="kpi-label">Mean Final Value</div>
+              <div class="kpi-value" id="kMean">—</div>
+              <div class="kpi-sub" id="kMeanDelta">E[P(T)]</div>
+            </div>
+            <div class="kpi-card kpi-blue">
+              <div class="kpi-label">Volatility σ</div>
+              <div class="kpi-value" id="kStd">—</div>
+              <div class="kpi-sub">Std-dev of final value</div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-label">Prob of Loss</div>
+              <div class="kpi-value" id="kProbLoss">—</div>
+              <div class="kpi-sub">P(P(T) &lt; P₀)</div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-label">Worst Case</div>
+              <div class="kpi-value" id="kMin">—</div>
+              <div class="kpi-sub">Min terminal value</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Chart 1: Spaghetti Plot -->
+      <div class="panel chart-panel hidden" id="chart1Panel">
+        <div class="chart-title">01 · Portfolio Trajectory Fan</div>
+        <div class="chart-subtitle">100 sampled GBM paths — correlated via Cholesky decomposition</div>
+        <div class="chart-el" id="chart1" style="height:340px;"></div>
+      </div>
+
+      <!-- Chart 2: Histogram -->
+      <div class="panel chart-panel hidden" id="chart2Panel">
+        <div class="chart-title">02 · Terminal Value Distribution &amp; Tail Risk</div>
+        <div class="chart-subtitle">Distribution of 10,000 simulated portfolio values at horizon T — VaR thresholds highlighted</div>
+        <div class="chart-el" id="chart2" style="height:340px;"></div>
+      </div>
+
+      <!-- Chart 3: 3D Surface -->
+      <div class="panel chart-panel hidden" id="chart3Panel">
+        <div class="chart-title">03 · Probability Density Evolution — 3D Surface</div>
+        <div class="chart-subtitle">KDE density of portfolio distribution at each time step — variance widens over time (GBM diffusion)</div>
+        <div class="chart-el" id="chart3" style="height:480px;"></div>
+      </div>
+
+    </div><!-- /right col -->
+  </div><!-- /main-grid -->
+
+  <footer>
+    <span>Monte Carlo Portfolio Risk Pricer · Vectorized NumPy Engine</span>
+    <span>Cholesky-correlated GBM · VaR · ES · FastAPI · Plotly</span>
+    <span>Deployed on Vercel</span>
+  </footer>
+</div>
+
+<!-- ── Plotly theme config ── -->
+<script>
+  // ────────────────────────────────────────────────────────────────────────────
+  //  GLOBAL CONFIG
+  // ────────────────────────────────────────────────────────────────────────────
+
+  const API_BASE = '/api';   // Change to http://localhost:8000/api for local dev
+
+  const COLORS = {
+    accent:  '#00dcb4',
+    accent2: '#00a3ff',
+    danger:  '#ff3e5e',
+    danger2: '#ff9900',
+    bg:      '#080c10',
+    surface: '#0d1117',
+    panel:   '#111820',
+    text:    '#d0e8e0',
+    muted:   'rgba(208,232,224,0.35)',
+  };
+
+  const PLOTLY_LAYOUT_BASE = {
+    paper_bgcolor: 'transparent',
+    plot_bgcolor:  'rgba(8,12,16,0.5)',
+    font:          { family: "'JetBrains Mono', monospace", color: COLORS.text, size: 11 },
+    margin:        { l: 60, r: 20, t: 20, b: 50 },
+    legend:        { bgcolor: 'rgba(0,0,0,0)', bordercolor: 'rgba(0,220,180,0.15)', borderwidth: 1 },
+    xaxis: {
+      gridcolor:    'rgba(0,220,180,0.06)',
+      linecolor:    'rgba(0,220,180,0.15)',
+      tickcolor:    'rgba(0,220,180,0.3)',
+      zerolinecolor:'rgba(0,220,180,0.1)',
+    },
+    yaxis: {
+      gridcolor:    'rgba(0,220,180,0.06)',
+      linecolor:    'rgba(0,220,180,0.15)',
+      tickcolor:    'rgba(0,220,180,0.3)',
+      zerolinecolor:'rgba(0,220,180,0.1)',
+    },
+  };
+
+  const PLOTLY_CONFIG = { displayModeBar: false, responsive: true };
+
+  // ────────────────────────────────────────────────────────────────────────────
+  //  ASSET MANAGEMENT
+  // ────────────────────────────────────────────────────────────────────────────
+
+  const defaultAssets = [
+    { ticker: 'AAPL', weight: 35 },
+    { ticker: 'MSFT', weight: 25 },
+    { ticker: 'NVDA', weight: 20 },
+    { ticker: 'AMZN', weight: 15 },
+    { ticker: 'GOOGL', weight: 5  },
+  ];
+
+  function addAssetRow(ticker = '', weight = '') {
+    const rows = document.querySelectorAll('.asset-row');
+    if (rows.length >= 5) return;
+
+    const row = document.createElement('div');
+    row.className = 'asset-row';
+    row.innerHTML = `
+      <input type="text" class="ticker-input" placeholder="e.g. AAPL" value="${ticker}"
+        style="text-transform:uppercase;" oninput="this.value=this.value.toUpperCase(); updateWeightTotal()" />
+      <input type="number" class="weight-input" placeholder="%" value="${weight}"
+        min="0" max="100" step="0.5" oninput="updateWeightTotal()" />
+      <button class="remove-btn" onclick="removeAssetRow(this)" title="Remove">✕</button>
+    `;
+    document.getElementById('assetRows').appendChild(row);
+    updateWeightTotal();
+    updateAddBtn();
+  }
+
+  function removeAssetRow(btn) {
+    const rows = document.querySelectorAll('.asset-row');
+    if (rows.length <= 1) return;
+    btn.closest('.asset-row').remove();
+    updateWeightTotal();
+    updateAddBtn();
+  }
+
+  function updateWeightTotal() {
+    const weights = [...document.querySelectorAll('.weight-input')]
+      .map(i => parseFloat(i.value) || 0);
+    const total = weights.reduce((a, b) => a + b, 0);
+    const el = document.getElementById('weightTotal');
+    el.textContent = `Σ = ${total.toFixed(1)}%`;
+    el.className = `weight-total ${Math.abs(total - 100) < 0.1 ? 'ok' : total > 100 ? 'error' : ''}`;
+  }
+
+  function updateAddBtn() {
+    const count = document.querySelectorAll('.asset-row').length;
+    document.getElementById('addAssetBtn').disabled = count >= 5;
+  }
+
+  // Init default assets
+  defaultAssets.forEach(a => addAssetRow(a.ticker, a.weight));
+
+  // ────────────────────────────────────────────────────────────────────────────
+  //  SIMULATION
+  // ────────────────────────────────────────────────────────────────────────────
+
+  async function runSimulation() {
+    const tickers = [...document.querySelectorAll('.ticker-input')]
+      .map(i => i.value.trim().toUpperCase()).filter(Boolean);
+    const weights = [...document.querySelectorAll('.weight-input')]
+      .map(i => parseFloat(i.value) || 0);
+
+    if (tickers.length === 0) return showError('Add at least one asset.');
+    if (tickers.length !== weights.length) return showError('Ticker/weight mismatch.');
+    const total = weights.reduce((a,b)=>a+b,0);
+    if (Math.abs(total - 100) > 0.5) return showError(`Weights must sum to 100% (current: ${total.toFixed(1)}%).`);
+
+    const payload = {
+      capital:       parseFloat(document.getElementById('capital').value),
+      tickers,
+      weights,
+      horizon:       parseInt(document.getElementById('horizon').value),
+      granularity:   document.getElementById('granularity').value,
+      n_simulations: parseInt(document.getElementById('nSims').value),
+    };
+
+    // Show loader
+    document.getElementById('loader').classList.add('active');
+    document.getElementById('runBtn').disabled = true;
+    document.getElementById('statusText').textContent = 'Computing...';
+
+    try {
+      const res = await fetch(`${API_BASE}/simulate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(err.detail || 'Simulation failed');
+      }
+      const data = await res.json();
+      renderResults(data, payload.capital);
+    } catch (e) {
+      showError(e.message);
+    } finally {
+      document.getElementById('loader').classList.remove('active');
+      document.getElementById('runBtn').disabled = false;
+    }
+  }
+
+  // ────────────────────────────────────────────────────────────────────────────
+  //  RENDER RESULTS
+  // ────────────────────────────────────────────────────────────────────────────
+
+  function fmt(n, decimals = 0) {
+    return new Intl.NumberFormat('fr-FR', {
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals,
+    }).format(n) + ' €';
+  }
+
+  function renderResults(d, capital) {
+    const rm = d.risk_metrics;
+
+    // ── KPIs ──
+    document.getElementById('kVaR95').textContent    = fmt(rm.var_95);
+    document.getElementById('kVaR95pct').textContent = `−${rm.var_95_pct}% of capital`;
+    document.getElementById('kVaR99').textContent    = fmt(rm.var_99);
+    document.getElementById('kVaR99pct').textContent = `−${rm.var_99_pct}% of capital`;
+    document.getElementById('kES95').textContent     = fmt(rm.es_95);
+    document.getElementById('kES95pct').textContent  = `−${rm.es_95_pct}% of capital`;
+    document.getElementById('kES99').textContent     = fmt(rm.es_99);
+    document.getElementById('kES99pct').textContent  = `−${rm.es_99_pct}% of capital`;
+    document.getElementById('kMean').textContent     = fmt(rm.mean_final);
+    const delta = rm.mean_final - capital;
+    document.getElementById('kMeanDelta').textContent = `${delta >= 0 ? '+' : ''}${fmt(delta)} vs initial`;
+    document.getElementById('kStd').textContent      = fmt(rm.std_final);
+    document.getElementById('kProbLoss').textContent = rm.prob_loss.toFixed(1) + '%';
+    document.getElementById('kMin').textContent      = fmt(rm.min_final);
+
+    // Status
+    document.getElementById('statusText').textContent  = `${d.tickers.join(', ')} · ${d.risk_metrics? 'OK' : ''}`;
+    document.getElementById('elapsedText').textContent = `${d.elapsed_ms} ms`;
+
+    // Show panels
+    document.getElementById('placeholder').classList.add('hidden');
+    ['kpiSection','chart1Panel','chart2Panel','chart3Panel'].forEach(id =>
+      document.getElementById(id).classList.remove('hidden')
+    );
+
+    // ── Graphs ──
+    renderSpaghettiPlot(d, capital);
+    renderHistogram(d, capital);
+    render3DSurface(d);
+  }
+
+  // ── Chart 1: Spaghetti ────────────────────────────────────────────────────
+
+  function renderSpaghettiPlot(d, capital) {
+    const paths = d.sample_paths;
+    const T = paths[0].length;
+    const xAxis = Array.from({ length: T }, (_, i) => i);
+
+    // Colour scale from muted to accent
+    const traces = paths.map((path, idx) => ({
+      x: xAxis,
+      y: path,
+      type: 'scatter',
+      mode: 'lines',
+      line: {
+        color: `rgba(0, ${Math.round(180 + 42 * (idx / paths.length))}, ${Math.round(100 + 100 * (idx/paths.length))}, 0.10)`,
+        width: 0.8,
+      },
+      showlegend: false,
+      hoverinfo: 'skip',
+    }));
+
+    // Mean path
+    const meanPath = xAxis.map(t =>
+      paths.reduce((s, p) => s + p[t], 0) / paths.length
+    );
+    traces.push({
+      x: xAxis,
+      y: meanPath,
+      type: 'scatter',
+      mode: 'lines',
+      name: 'Mean path',
+      line: { color: COLORS.accent, width: 2.5, dash: 'solid' },
+    });
+
+    // Capital line
+    traces.push({
+      x: [0, T - 1],
+      y: [capital, capital],
+      type: 'scatter',
+      mode: 'lines',
+      name: 'Initial capital',
+      line: { color: COLORS.muted, width: 1, dash: 'dot' },
+    });
+
+    const layout = {
+      ...PLOTLY_LAYOUT_BASE,
+      xaxis: { ...PLOTLY_LAYOUT_BASE.xaxis, title: 'Time Step (t)' },
+      yaxis: { ...PLOTLY_LAYOUT_BASE.yaxis, title: 'Portfolio Value (€)' },
+      hovermode: 'closest',
+    };
+
+    Plotly.newPlot('chart1', traces, layout, PLOTLY_CONFIG);
+  }
+
+  // ── Chart 2: Histogram ────────────────────────────────────────────────────
+
+  function renderHistogram(d, capital) {
+    const finals = d.final_values;
+    const rm = d.risk_metrics;
+    const maxY_est = finals.length / 30; // rough density scaling
+
+    const histTrace = {
+      x: finals,
+      type: 'histogram',
+      name: 'Final portfolio value',
+      nbinsx: 80,
+      marker: {
+        color: COLORS.accent2,
+        opacity: 0.55,
+        line: { color: 'rgba(0,163,255,0.05)', width: 0.5 },
+      },
+    };
+
+    // VaR lines
+    const var95Line = buildVLine(capital - rm.var_95, 'VaR 95%', COLORS.danger2);
+    const var99Line = buildVLine(capital - rm.var_99, 'VaR 99%', COLORS.danger);
+    const capLine   = buildVLine(capital,             'P₀',       COLORS.muted);
+
+    const layout = {
+      ...PLOTLY_LAYOUT_BASE,
+      xaxis: { ...PLOTLY_LAYOUT_BASE.xaxis, title: 'Terminal Portfolio Value (€)' },
+      yaxis: { ...PLOTLY_LAYOUT_BASE.yaxis, title: 'Frequency' },
+      bargap: 0.04,
+      shapes: [
+        shapeVLine(capital - rm.var_95, COLORS.danger2),
+        shapeVLine(capital - rm.var_99, COLORS.danger),
+        shapeVLine(capital,             COLORS.muted, [4,4]),
+      ],
+      annotations: [
+        annotVLine(capital - rm.var_95, `VaR 95%<br>-${rm.var_95_pct}%`, COLORS.danger2),
+        annotVLine(capital - rm.var_99, `VaR 99%<br>-${rm.var_99_pct}%`, COLORS.danger),
+      ],
+    };
+
+    Plotly.newPlot('chart2', [histTrace], layout, PLOTLY_CONFIG);
+  }
+
+  function shapeVLine(x, color, dash = []) {
+    return {
+      type: 'line', xref: 'x', yref: 'paper',
+      x0: x, x1: x, y0: 0, y1: 1,
+      line: { color, width: 1.5, ...(dash.length ? { dash: 'dash' } : {}) },
+    };
+  }
+
+  function annotVLine(x, text, color) {
+    return {
+      x, y: 0.96, xref: 'x', yref: 'paper',
+      text, showarrow: false,
+      font: { color, family: "'JetBrains Mono', monospace", size: 10 },
+      textangle: -90, xanchor: 'left',
+    };
+  }
+
+  // ── Chart 3: 3D Surface ───────────────────────────────────────────────────
+
+  function render3DSurface(d) {
+    // surface_z: [n_time_pts][n_value_bins]  →  Plotly wants z[row][col] where row=y, col=x
+    // We want X=time, Y=value, Z=density
+    const trace = {
+      type: 'surface',
+      x: d.surface_x,        // time steps
+      y: d.surface_y,        // portfolio values
+      z: d.surface_z,        // [time][value] density
+      colorscale: [
+        [0.0,  'rgba(8,12,16,0)'],
+        [0.15, 'rgba(0,163,255,0.2)'],
+        [0.4,  'rgba(0,163,255,0.5)'],
+        [0.7,  'rgba(0,220,180,0.7)'],
+        [1.0,  'rgba(0,220,180,1.0)'],
+      ],
+      showscale: false,
+      opacity: 0.92,
+      contours: {
+        z: { show: false },
+      },
+      lighting: {
+        ambient: 0.6,
+        diffuse: 0.7,
+        specular: 0.1,
+      },
+    };
+
+    const layout3d = {
+      paper_bgcolor: 'transparent',
+      font: { family: "'JetBrains Mono', monospace", color: COLORS.text, size: 10 },
+      margin: { l: 0, r: 0, t: 10, b: 0 },
+      scene: {
+        bgcolor: 'rgba(8,12,16,0.6)',
+        xaxis: {
+          title: { text: 'Time Step', font: { color: COLORS.muted } },
+          gridcolor: 'rgba(0,220,180,0.07)',
+          linecolor: 'rgba(0,220,180,0.15)',
+          tickcolor: COLORS.muted,
+          showbackground: false,
+        },
+        yaxis: {
+          title: { text: 'Portfolio Value (€)', font: { color: COLORS.muted } },
+          gridcolor: 'rgba(0,163,255,0.07)',
+          linecolor: 'rgba(0,163,255,0.15)',
+          tickcolor: COLORS.muted,
+          showbackground: false,
+        },
+        zaxis: {
+          title: { text: 'Density', font: { color: COLORS.muted } },
+          gridcolor: 'rgba(208,232,224,0.05)',
+          linecolor: 'rgba(208,232,224,0.1)',
+          tickcolor: COLORS.muted,
+          showbackground: false,
+        },
+        camera: {
+          eye: { x: -1.5, y: -1.8, z: 1.1 },
+          up:  { x: 0, y: 0, z: 1 },
+        },
+      },
+    };
+
+    Plotly.newPlot('chart3', [trace], layout3d, { ...PLOTLY_CONFIG, displayModeBar: false });
+  }
+
+  // ────────────────────────────────────────────────────────────────────────────
+  //  UTILITIES
+  // ────────────────────────────────────────────────────────────────────────────
+
+  function showError(msg) {
+    const el = document.getElementById('errorToast');
+    el.textContent = '⚠ ' + msg;
+    el.classList.add('active');
+    document.getElementById('statusText').textContent = 'Error';
+    setTimeout(() => el.classList.remove('active'), 5000);
+  }
+
+  // Dismiss toast on click
+  document.getElementById('errorToast').addEventListener('click', function() {
+    this.classList.remove('active');
+  });
+</script>
+</body>
+</html>

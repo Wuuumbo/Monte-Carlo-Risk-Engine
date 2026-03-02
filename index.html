@@ -211,27 +211,61 @@
     select { cursor: pointer; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='rgba(0,220,180,0.6)' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; padding-right: 32px; }
 
     /* ── Asset Rows ── */
-    .asset-rows { display: flex; flex-direction: column; gap: 8px; }
+    .asset-rows { display: flex; flex-direction: column; gap: 10px; }
 
     .asset-row {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      animation: slideIn 0.2s ease;
+    }
+    .asset-row-inputs {
       display: grid;
       grid-template-columns: 1fr 72px 28px;
       gap: 6px;
       align-items: center;
-      animation: slideIn 0.2s ease;
     }
     @keyframes slideIn {
       from { opacity: 0; transform: translateY(-6px); }
       to   { opacity: 1; transform: translateY(0); }
     }
-
     .asset-row input { font-size: 12px; padding: 7px 10px; }
 
+    /* Ticker input border states */
+    .ticker-input.is-valid   { border-color: rgba(0, 220, 180, 0.60) !important; box-shadow: 0 0 0 2px rgba(0,220,180,0.08) !important; }
+    .ticker-input.is-invalid { border-color: rgba(255, 62, 94, 0.60) !important; box-shadow: 0 0 0 2px rgba(255,62,94,0.08) !important; }
+    .ticker-input.is-loading { border-color: rgba(0, 163, 255, 0.50) !important; }
+
     .weight-input { text-align: right; }
-    .weight-suffix {
+
+    /* Ticker feedback pill */
+    .ticker-feedback {
+      display: none;
+      align-items: center;
+      gap: 6px;
       font-size: 10px;
-      color: var(--muted);
-      text-align: center;
+      padding: 4px 10px;
+      border-radius: 2px;
+      overflow: hidden;
+    }
+    .ticker-feedback.show { display: flex; animation: fadeInDown 0.15s ease; }
+    @keyframes fadeInDown {
+      from { opacity: 0; transform: translateY(-4px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .ticker-feedback.valid   { background: rgba(0,220,180,0.07); border: 1px solid rgba(0,220,180,0.20); color: var(--accent); }
+    .ticker-feedback.invalid { background: rgba(255,62,94,0.07);  border: 1px solid rgba(255,62,94,0.22);  color: var(--danger); }
+    .ticker-feedback.loading { background: rgba(0,163,255,0.06); border: 1px solid rgba(0,163,255,0.18); color: var(--accent2); }
+
+    .feedback-icon  { flex-shrink: 0; font-size: 11px; }
+    .feedback-name  { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 0.85; }
+    .feedback-price { flex-shrink: 0; font-weight: 500; margin-left: auto; opacity: 0.8; }
+    .feedback-exch  { flex-shrink: 0; opacity: 0.5; font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; }
+
+    .spinner {
+      display: inline-block; width: 10px; height: 10px;
+      border: 1.5px solid rgba(0,163,255,0.2); border-top-color: var(--accent2);
+      border-radius: 50%; animation: spin 0.7s linear infinite; flex-shrink: 0;
     }
 
     .remove-btn {
@@ -732,7 +766,11 @@
   //  GLOBAL CONFIG
   // ────────────────────────────────────────────────────────────────────────────
 
-  const API_BASE = '/api';   // Change to http://localhost:8000/api for local dev
+  // Auto-detect environment: Vercel production vs local dev
+  const isLocal = ['localhost', '127.0.0.1'].includes(window.location.hostname);
+  const API_BASE = isLocal
+    ? window.location.protocol + '//' + window.location.hostname + ':8000/api'
+    : '/api';
 
   const COLORS = {
     accent:  '#00dcb4',
@@ -780,20 +818,41 @@
     { ticker: 'GOOGL', weight: 5  },
   ];
 
+  // ── Per-ticker validation state ────────────────────────────────────────────
+  // Map: rowId → { state: 'idle'|'loading'|'valid'|'invalid', abortController }
+  const tickerState = new Map();
+  let rowCounter = 0;
+
   function addAssetRow(ticker = '', weight = '') {
     const rows = document.querySelectorAll('.asset-row');
     if (rows.length >= 5) return;
 
+    const rowId = `row-${++rowCounter}`;
     const row = document.createElement('div');
     row.className = 'asset-row';
+    row.dataset.rowId = rowId;
     row.innerHTML = `
-      <input type="text" class="ticker-input" placeholder="e.g. AAPL" value="${ticker}"
-        style="text-transform:uppercase;" oninput="this.value=this.value.toUpperCase(); updateWeightTotal()" />
-      <input type="number" class="weight-input" placeholder="%" value="${weight}"
-        min="0" max="100" step="0.5" oninput="updateWeightTotal()" />
-      <button class="remove-btn" onclick="removeAssetRow(this)" title="Remove">✕</button>
+      <div class="asset-row-inputs">
+        <input type="text" class="ticker-input" placeholder="e.g. AAPL, MC.PA…" value="${ticker}"
+          style="text-transform:uppercase;"
+          oninput="this.value=this.value.toUpperCase(); updateWeightTotal(); onTickerInput(this)"
+          onblur="validateTicker(this)"
+          onkeydown="if(event.key==='Enter') validateTicker(this)" />
+        <input type="number" class="weight-input" placeholder="%" value="${weight}"
+          min="0" max="100" step="0.5" oninput="updateWeightTotal()" />
+        <button class="remove-btn" onclick="removeAssetRow(this)" title="Remove">✕</button>
+      </div>
+      <div class="ticker-feedback" id="fb-${rowId}"></div>
     `;
     document.getElementById('assetRows').appendChild(row);
+    tickerState.set(rowId, { state: 'idle', controller: null });
+
+    // If a ticker was pre-filled, validate it automatically
+    if (ticker) {
+      const input = row.querySelector('.ticker-input');
+      validateTicker(input);
+    }
+
     updateWeightTotal();
     updateAddBtn();
   }
@@ -801,7 +860,13 @@
   function removeAssetRow(btn) {
     const rows = document.querySelectorAll('.asset-row');
     if (rows.length <= 1) return;
-    btn.closest('.asset-row').remove();
+    const row = btn.closest('.asset-row');
+    const rowId = row.dataset.rowId;
+    // Cancel any in-flight request
+    const st = tickerState.get(rowId);
+    if (st?.controller) st.controller.abort();
+    tickerState.delete(rowId);
+    row.remove();
     updateWeightTotal();
     updateAddBtn();
   }
@@ -818,6 +883,102 @@
   function updateAddBtn() {
     const count = document.querySelectorAll('.asset-row').length;
     document.getElementById('addAssetBtn').disabled = count >= 5;
+  }
+
+  // ── Ticker validation ──────────────────────────────────────────────────────
+
+  let debounceTimers = {};
+
+  function onTickerInput(input) {
+    // Reset feedback immediately on new input
+    const row   = input.closest('.asset-row');
+    const rowId = row.dataset.rowId;
+    const fb    = document.getElementById(`fb-${rowId}`);
+    input.classList.remove('is-valid', 'is-invalid', 'is-loading');
+    fb.className = 'ticker-feedback';
+    fb.innerHTML = '';
+    // Cancel in-flight request
+    const st = tickerState.get(rowId);
+    if (st?.controller) { st.controller.abort(); tickerState.set(rowId, { ...st, controller: null }); }
+  }
+
+  function validateTicker(input) {
+    const ticker = input.value.trim().toUpperCase();
+    if (!ticker) return;
+
+    const row   = input.closest('.asset-row');
+    const rowId = row.dataset.rowId;
+    const fb    = document.getElementById(`fb-${rowId}`);
+
+    // Cancel previous in-flight
+    const prev = tickerState.get(rowId);
+    if (prev?.controller) prev.controller.abort();
+
+    // Show loading state
+    input.classList.remove('is-valid', 'is-invalid');
+    input.classList.add('is-loading');
+    fb.className = 'ticker-feedback loading show';
+    fb.innerHTML = `<span class="spinner"></span><span class="feedback-name">Validating ${ticker} on Yahoo Finance…</span>`;
+
+    const controller = new AbortController();
+    tickerState.set(rowId, { state: 'loading', controller });
+
+    fetch(`${API_BASE}/validate-ticker/${encodeURIComponent(ticker)}`, {
+      signal: controller.signal,
+    })
+    .then(r => r.json())
+    .then(data => {
+      input.classList.remove('is-loading');
+      if (data.valid) {
+        input.classList.add('is-valid');
+        tickerState.set(rowId, { state: 'valid', controller: null });
+
+        const priceStr = data.last_price != null
+          ? `${data.last_price.toFixed(2)} ${data.currency || ''}`
+          : '';
+        const nameStr  = data.name || ticker;
+        const exchStr  = data.exchange ? `· ${data.exchange}` : '';
+        const typeStr  = data.asset_type ? `(${data.asset_type})` : '';
+
+        fb.className = 'ticker-feedback valid show';
+        fb.innerHTML = `
+          <span class="feedback-icon">✓</span>
+          <span class="feedback-name">${nameStr} ${typeStr}</span>
+          <span class="feedback-exch">${exchStr}</span>
+          ${priceStr ? `<span class="feedback-price">${priceStr}</span>` : ''}
+        `;
+      } else {
+        input.classList.add('is-invalid');
+        tickerState.set(rowId, { state: 'invalid', controller: null });
+
+        fb.className = 'ticker-feedback invalid show';
+        fb.innerHTML = `
+          <span class="feedback-icon">✗</span>
+          <span class="feedback-name">${data.error || 'Ticker not found on Yahoo Finance'}</span>
+        `;
+      }
+    })
+    .catch(err => {
+      if (err.name === 'AbortError') return; // user typed again, ignore
+      input.classList.remove('is-loading');
+      input.classList.add('is-invalid');
+      fb.className = 'ticker-feedback invalid show';
+      fb.innerHTML = `<span class="feedback-icon">✗</span><span class="feedback-name">Network error — check connection</span>`;
+      tickerState.set(rowId, { state: 'invalid', controller: null });
+    });
+  }
+
+  // Guard: block simulation if any ticker is still invalid or loading
+  function allTickersValid() {
+    const inputs = [...document.querySelectorAll('.ticker-input')].filter(i => i.value.trim());
+    for (const input of inputs) {
+      const row   = input.closest('.asset-row');
+      const rowId = row.dataset.rowId;
+      const st    = tickerState.get(rowId);
+      if (!st || st.state === 'invalid') return { ok: false, reason: `Ticker "${input.value}" is invalid or not found.` };
+      if (st.state === 'loading')        return { ok: false, reason: `Still validating ticker "${input.value}"… please wait.` };
+    }
+    return { ok: true };
   }
 
   // Init default assets
@@ -837,6 +998,27 @@
     if (tickers.length !== weights.length) return showError('Ticker/weight mismatch.');
     const total = weights.reduce((a,b)=>a+b,0);
     if (Math.abs(total - 100) > 0.5) return showError(`Weights must sum to 100% (current: ${total.toFixed(1)}%).`);
+
+    // ── Ticker validation guard ──────────────────────────────────────────────
+    // If any tickers haven't been validated yet (e.g. user never left the field),
+    // run validation first and block until complete.
+    const unvalidated = [...document.querySelectorAll('.ticker-input')]
+      .filter(i => i.value.trim())
+      .filter(i => {
+        const rowId = i.closest('.asset-row').dataset.rowId;
+        const st = tickerState.get(rowId);
+        return !st || st.state === 'idle';
+      });
+
+    if (unvalidated.length > 0) {
+      // Trigger validation for all unvalidated tickers, then re-run simulate
+      unvalidated.forEach(i => validateTicker(i));
+      showError('Validating tickers… please click Run again in a moment.');
+      return;
+    }
+
+    const validity = allTickersValid();
+    if (!validity.ok) return showError(validity.reason);
 
     const payload = {
       capital:       parseFloat(document.getElementById('capital').value),

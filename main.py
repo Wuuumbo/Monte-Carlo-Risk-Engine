@@ -12,18 +12,25 @@ Deployed: Vercel Serverless Functions
 from __future__ import annotations
 
 import logging
+import os
 import time
+from pathlib import Path
 from typing import Literal
 
 import numpy as np
 import yfinance as yf
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
+
+# ── Paths ──────────────────────────────────────────────────────────────────────
+# Resolves to the project root (one level above api/)
+ROOT_DIR = Path(__file__).resolve().parent.parent
 
 # ── App ────────────────────────────────────────────────────────────────────────
 app = FastAPI(
@@ -313,6 +320,87 @@ def health():
     return {"status": "ok", "engine": "numpy-vectorized-cholesky-gbm"}
 
 
+class TickerValidationResponse(BaseModel):
+    ticker: str
+    valid: bool
+    name: str | None = None
+    currency: str | None = None
+    exchange: str | None = None
+    asset_type: str | None = None
+    last_price: float | None = None
+    error: str | None = None
+
+
+@app.get("/api/validate-ticker/{ticker}", response_model=TickerValidationResponse)
+def validate_ticker(ticker: str):
+    """
+    Lightweight check: does this ticker exist on Yahoo Finance and return data?
+    Returns metadata (company name, currency, exchange, last price) on success.
+    Fast-path: uses yf.Ticker.fast_info to avoid downloading full history.
+    """
+    ticker_clean = ticker.strip().upper()
+    if not ticker_clean or len(ticker_clean) > 12:
+        return TickerValidationResponse(
+            ticker=ticker_clean,
+            valid=False,
+            error="Invalid ticker format",
+        )
+
+    try:
+        t = yf.Ticker(ticker_clean)
+
+        # fast_info is a lightweight metadata object (no history download)
+        fi = t.fast_info
+
+        # Probe a key attribute — raises/returns None if ticker is unknown
+        last_price = getattr(fi, "last_price", None)
+        currency   = getattr(fi, "currency", None)
+        exchange   = getattr(fi, "exchange", None)
+
+        # Also grab the long name from .info (slower but richer — only called on valid tickers)
+        # We use a short timeout approach: if fast_info returns None prices, ticker is invalid
+        if last_price is None:
+            # Try a 5-day history pull as a fallback check
+            hist = t.history(period="5d", interval="1d", auto_adjust=True)
+            if hist.empty:
+                return TickerValidationResponse(
+                    ticker=ticker_clean,
+                    valid=False,
+                    error=f"No price data found for '{ticker_clean}'. Check spelling or try a different exchange suffix (e.g. MC.PA, AIR.PA).",
+                )
+            last_price = float(hist["Close"].iloc[-1])
+
+        # Fetch display name from .info (best-effort, may timeout on Vercel cold start)
+        name = None
+        asset_type = None
+        try:
+            info = t.info
+            name       = info.get("longName") or info.get("shortName")
+            asset_type = info.get("quoteType")
+            currency   = currency or info.get("currency")
+            exchange   = exchange or info.get("exchange")
+        except Exception:
+            pass  # .info is optional – fast_info is enough to validate
+
+        return TickerValidationResponse(
+            ticker=ticker_clean,
+            valid=True,
+            name=name,
+            currency=currency,
+            exchange=exchange,
+            asset_type=asset_type,
+            last_price=round(float(last_price), 4) if last_price else None,
+        )
+
+    except Exception as e:
+        log.warning(f"Ticker validation failed for '{ticker_clean}': {e}")
+        return TickerValidationResponse(
+            ticker=ticker_clean,
+            valid=False,
+            error=f"Lookup failed: {str(e)[:120]}",
+        )
+
+
 @app.post("/api/simulate", response_model=SimulationResponse)
 def simulate(req: SimulationRequest):
     t0 = time.perf_counter()
@@ -373,3 +461,17 @@ def simulate(req: SimulationRequest):
         elapsed_ms=round(elapsed_ms, 1),
         annualization_factor=ANNUALIZATION[req.granularity],
     )
+
+
+# ── Serve Frontend ─────────────────────────────────────────────────────────────
+# FastAPI also serves index.html so you only need ONE process locally.
+# Run: uvicorn api.main:app --reload --port 8000
+# Then open: http://localhost:8000
+
+@app.get("/", include_in_schema=False)
+def serve_frontend():
+    """Serve the single-page frontend from the project root."""
+    html_path = ROOT_DIR / "index.html"
+    if html_path.exists():
+        return FileResponse(str(html_path), media_type="text/html")
+    return {"error": "index.html not found — make sure to run uvicorn from the project root."}

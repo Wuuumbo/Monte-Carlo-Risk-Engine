@@ -334,70 +334,112 @@ class TickerValidationResponse(BaseModel):
 @app.get("/api/validate-ticker/{ticker}", response_model=TickerValidationResponse)
 def validate_ticker(ticker: str):
     """
-    Lightweight check: does this ticker exist on Yahoo Finance and return data?
-    Returns metadata (company name, currency, exchange, last price) on success.
-    Fast-path: uses yf.Ticker.fast_info to avoid downloading full history.
+    Validate a ticker using yf.download — the same battle-tested method used
+    by the simulation engine. fast_info / .info are unreliable in serverless
+    environments (Vercel) due to cookie/session restrictions; yf.download works.
     """
+    import pandas as pd
+
     ticker_clean = ticker.strip().upper()
-    if not ticker_clean or len(ticker_clean) > 12:
+
+    # Basic format guard
+    if not ticker_clean or len(ticker_clean) > 15:
         return TickerValidationResponse(
-            ticker=ticker_clean,
+            ticker=ticker_clean or ticker,
             valid=False,
-            error="Invalid ticker format",
+            error="Invalid ticker format (too long or empty).",
         )
 
+    log.info(f"Validating ticker: {ticker_clean}")
+
     try:
-        t = yf.Ticker(ticker_clean)
+        # ── Primary method: yf.download (identical to simulation) ────────────
+        # period="5d" is the minimum reliable window; auto_adjust=True for splits
+        raw = yf.download(
+            ticker_clean,
+            period="5d",
+            interval="1d",
+            auto_adjust=True,
+            progress=False,
+            threads=False,   # single ticker → no threading overhead
+        )
 
-        # fast_info is a lightweight metadata object (no history download)
-        fi = t.fast_info
+        # yf.download returns an empty DataFrame for unknown tickers
+        if raw is None or raw.empty:
+            log.warning(f"yf.download returned empty for: {ticker_clean}")
+            return TickerValidationResponse(
+                ticker=ticker_clean,
+                valid=False,
+                error=(
+                    f"'{ticker_clean}' not found on Yahoo Finance. "
+                    "Check spelling. European tickers need a suffix: "
+                    "MC.PA (LVMH), AIR.PA (Airbus), SAN.MC (Santander), NOVN.SW (Novartis)."
+                ),
+            )
 
-        # Probe a key attribute — raises/returns None if ticker is unknown
-        last_price = getattr(fi, "last_price", None)
-        currency   = getattr(fi, "currency", None)
-        exchange   = getattr(fi, "exchange", None)
+        # Extract Close column robustly (MultiIndex when single ticker too in recent yfinance)
+        if isinstance(raw.columns, pd.MultiIndex):
+            close_col = raw["Close"][ticker_clean]
+        else:
+            close_col = raw["Close"]
 
-        # Also grab the long name from .info (slower but richer — only called on valid tickers)
-        # We use a short timeout approach: if fast_info returns None prices, ticker is invalid
-        if last_price is None:
-            # Try a 5-day history pull as a fallback check
-            hist = t.history(period="5d", interval="1d", auto_adjust=True)
-            if hist.empty:
-                return TickerValidationResponse(
-                    ticker=ticker_clean,
-                    valid=False,
-                    error=f"No price data found for '{ticker_clean}'. Check spelling or try a different exchange suffix (e.g. MC.PA, AIR.PA).",
-                )
-            last_price = float(hist["Close"].iloc[-1])
+        close_col = close_col.dropna()
 
-        # Fetch display name from .info (best-effort, may timeout on Vercel cold start)
-        name = None
+        if close_col.empty:
+            return TickerValidationResponse(
+                ticker=ticker_clean,
+                valid=False,
+                error=f"Price data empty for '{ticker_clean}' — delisted or suspended?",
+            )
+
+        last_price = float(close_col.iloc[-1])
+
+        # ── Best-effort metadata via yf.Ticker (non-blocking) ───────────────
+        # We already know the ticker is valid (download succeeded).
+        # .info can fail on Vercel — we catch everything and use fallbacks.
+        name       = None
+        currency   = None
+        exchange   = None
         asset_type = None
+
         try:
-            info = t.info
+            t = yf.Ticker(ticker_clean)
+            # fast_info is a thin wrapper over a single JSON endpoint
+            fi = t.fast_info
+            currency = getattr(fi, "currency", None)
+            exchange = getattr(fi, "exchange", None)
+        except Exception as e:
+            log.debug(f"fast_info failed for {ticker_clean}: {e}")
+
+        try:
+            info       = t.info  # may raise or return {} in serverless
             name       = info.get("longName") or info.get("shortName")
-            asset_type = info.get("quoteType")
+            asset_type = info.get("quoteType")   # "EQUITY", "ETF", "INDEX", …
             currency   = currency or info.get("currency")
             exchange   = exchange or info.get("exchange")
-        except Exception:
-            pass  # .info is optional – fast_info is enough to validate
+        except Exception as e:
+            log.debug(f".info failed for {ticker_clean}: {e}")
+            # Graceful fallback — validation still succeeds, just less metadata
+            name = ticker_clean  # show ticker itself as name if .info unavailable
+
+        log.info(f"Validation OK: {ticker_clean} | {name} | {last_price} {currency}")
 
         return TickerValidationResponse(
             ticker=ticker_clean,
             valid=True,
-            name=name,
+            name=name or ticker_clean,
             currency=currency,
             exchange=exchange,
             asset_type=asset_type,
-            last_price=round(float(last_price), 4) if last_price else None,
+            last_price=round(last_price, 4),
         )
 
     except Exception as e:
-        log.warning(f"Ticker validation failed for '{ticker_clean}': {e}")
+        log.error(f"Unexpected error validating '{ticker_clean}': {e}")
         return TickerValidationResponse(
             ticker=ticker_clean,
             valid=False,
-            error=f"Lookup failed: {str(e)[:120]}",
+            error=f"Server error during lookup: {str(e)[:150]}",
         )
 
 
